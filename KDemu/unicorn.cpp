@@ -9,6 +9,7 @@
 PEloader* Unicorn::loader = &PEloader::GetInstance();
 uint64_t Previous_address = 0;
 
+constexpr bool ShowContextDetail = false;
 
 namespace {
 	constexpr size_t kPageSize = 0x1000;
@@ -55,8 +56,25 @@ void Unicorn::seh_Handle(uc_engine* uc)
 	Sleep(10);
 }
 
+// DEBUG
+static uint64_t prevPc = 0;
+
+// DEBUG
+static bool InModule(uint64_t address) {
+	return (address >= 0xfffff805dc9a0000 && address <= 0xfffff805dea04000);
+}
+
 void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, void* user_data)
 {
+	// DEBUG
+	if (InModule(prevPc) && !InModule(address)) {
+		if (auto name = g_Debugger->GetName(address, true); !name.empty()) {
+			Logger::Log(true, ConsoleColor::DARK_YELLOW, "calling 0x%llx(%s)\n", address, name.c_str());
+		}
+	}
+
+	prevPc = address;
+
 	PEloader* loader = &PEloader::GetInstance();
 	auto emu = Emu(uc);
 	if (loader->errorevent != nullptr)
@@ -553,8 +571,11 @@ bool Unicorn::hook_mem_invalid(uc_engine* uc, uc_mem_type type, uint64_t address
 				Emu(uc)->alloc(kPageSize, aligned_address, MUC_PROT_ALL);
 			}
 		}
-		ShowRegister(uc);
-		dump_stack(uc, rsp, 10);
+
+		if constexpr (ShowContextDetail) {
+			ShowRegister(uc);
+			dump_stack(uc, rsp, 10);
+		}
 		break;
 	case UC_MEM_FETCH_UNMAPPED:
 		for (auto& map : loader->real_mem_map)

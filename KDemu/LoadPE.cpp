@@ -5,6 +5,7 @@
 #include <fstream>
 #include <psapi.h>
 #include "cpu.h"
+#include "Debugger.h"
 
 #pragma comment(lib,"ntdll.lib")
 
@@ -22,241 +23,120 @@ extern "C"
 		);
 }
 
-void PEloader::GetAllDriverBaseAddresses() {
-	DWORD cbNeeded = 0;
-	if (!EnumDeviceDrivers(NULL, 0, &cbNeeded)) {
-		std::cerr << "EnumDeviceDrivers failed to get size: " << GetLastError() << std::endl;
-		return;
-	}
-
-	std::vector<void*> driverAddresses(cbNeeded / sizeof(void*));
-	if (!EnumDeviceDrivers(driverAddresses.data(), cbNeeded, &cbNeeded)) {
-		std::cerr << "EnumDeviceDrivers failed: " << GetLastError() << std::endl;
-		return;
-	}
-	for (void* baseAddr : driverAddresses) {
-		if (baseAddr == nullptr) break;
-
-		wchar_t driverName[MAX_PATH] = { 0 };
-		if (GetDeviceDriverBaseName(baseAddr, driverName, MAX_PATH)) {
-			int len = WideCharToMultiByte(CP_UTF8, 0, driverName, -1, nullptr, 0, nullptr, nullptr);
-			if (len > 0) {
-				std::string strName(len - 1, 0);
-				int result = WideCharToMultiByte(CP_UTF8, 0, driverName, -1, &strName[0], len, nullptr, nullptr);
-				if (result > 0) {
-					this->AllDriverBaseAddr[strName] = (uint64_t)baseAddr;
-					if (strName == "ntoskrnl.exe" || strName == "CI.dll" || strName == "cng.sys")
-						LoadModule(strName, 0);
-				}
-				else {
-					std::cerr << "WideCharToMultiByte failed: " << GetLastError() << std::endl;
-				}
-			}
-		}
-	}
-}
-
 void PEloader::MapAllDriversFromKdmp() {
     auto emu = Emu(uc);
 
-    auto to_lower = [](std::string s) {
-        for (auto &c : s) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-        return s;
-    };
-    auto basename_no_ext = [&](const std::string &path) {
-        size_t pos = path.find_last_of("/\\");
-        std::string fname = (pos == std::string::npos) ? path : path.substr(pos + 1);
-        size_t dot = fname.find_last_of('.');
-        if (dot != std::string::npos) fname = fname.substr(0, dot);
-        return to_lower(fname);
-    };
-    std::vector<std::string> processed_names;
-    processed_names.reserve(peFiles.size());
-    for (auto *pf : peFiles) {
-        if (!pf) continue;
-        processed_names.emplace_back(basename_no_ext(pf->FileName));
-    }
-
-    int ntIndex = -1;
-    for (size_t i = 0; i < peFiles.size(); ++i) {
-        if (peFiles[i] && peFiles[i]->FileName == "ntoskrnl.exe") {
-            ntIndex = static_cast<int>(i);
-            break;
-        }
-    }
-    if (ntIndex < 0) {
+	NtoskrnlBase = Debugger.Evaluate64("nt");
+    if (!NtoskrnlBase) {
 		Logger::Log(true, ConsoleColor::RED, "[KDMP] Failed to find ntoskrnl.exe PE metadata; unable to locate PsLoadedModuleList.\n");
         return;
     }
 
-    uint64_t psListRva = 0;
-    {
-        auto it = peFiles[ntIndex]->FuncAddr.find("PsLoadedModuleList");
-        if (it != peFiles[ntIndex]->FuncAddr.end())
-            psListRva = it->second;
-    }
-	if (psListRva == 0) {
-		Logger::Log(true, ConsoleColor::RED, "[KDMP] PsLoadedModuleList symbol not found (RVA=0).\n");
-        return;
-    }
+	cibase = Debugger.Evaluate64("ci");
+	if (!cibase) {
+		Logger::Log(true, ConsoleColor::RED, "[KDMP] Failed to find CI.dll's PE metadata; unable to locate PsLoadedModuleList.\n");
+		return;
+	}
 
-    uint64_t ntCandidates[3] = { 0, 0, 0 };
-    int candCount = 0;
-    if (peFiles[ntIndex]->Base) ntCandidates[candCount++] = peFiles[ntIndex]->Base;
-    if (NtoskrnlBase) ntCandidates[candCount++] = NtoskrnlBase;
-    auto itLive = AllDriverBaseAddr.find("ntoskrnl.exe");
-    if (itLive != AllDriverBaseAddr.end()) ntCandidates[candCount++] = itLive->second;
+	cngbase = Debugger.Evaluate64("cng");
+	if (!cngbase) {
+		Logger::Log(true, ConsoleColor::RED, "[KDMP] Failed to find cng.sys PE metadata; unable to locate PsLoadedModuleList.\n");
+		return;
+	}
 
-    auto read_kdmp = [this](uint64_t addr, void* out, size_t sz) -> bool {
-        uint8_t* dst = reinterpret_cast<uint8_t*>(out);
-        size_t rem = sz;
-        while (rem > 0) {
-            uint64_t page_base = addr & ~0xfffull;
-            const uint8_t* page = kdmp.GetVirtualPage(page_base);
-            if (!page) return false;
-            size_t off = static_cast<size_t>(addr & 0xfff);
-            size_t avail = 0x1000ull - off;
-            size_t n = (rem < avail) ? rem : avail;
-            const uint8_t* src = page + off;
-            for (size_t i = 0; i < n; ++i) dst[i] = src[i];
-            dst += n;
-            addr += n;
-            rem -= n;
-        }
-        return true;
-    };
+	halbase = Debugger.Evaluate64("hal");
+	if (!halbase) {
+		Logger::Log(true, ConsoleColor::RED, "[KDMP] Failed to find HAL.sys PE metadata; unable to locate PsLoadedModuleList.\n");
+		return;
+	}
 
-    LIST_ENTRY listHead{};
-    uint64_t psListHeadAddr = 0;
-    bool headOk = false;
-    for (int i = 0; i < candCount; ++i) {
-        uint64_t base = ntCandidates[i];
-        if (!base) continue;
-        uint64_t addr = base + psListRva;
-        if (read_kdmp(addr, &listHead, sizeof(listHead))) {
-            psListHeadAddr = addr;
-            headOk = true;
-			Logger::Log(true, ConsoleColor::DARK_GREEN, "[KDMP] PsLoadedModuleList OK, nt base=0x%llx -> head=0x%llx.\n", base, addr);
-            break;
-        } else {
-			Logger::Log(true, ConsoleColor::YELLOW, "[KDMP] Attempt with nt base=0x%llx failed (addr=0x%llx).\n", base, addr);
-        }
-    }
-    if (!headOk) {
-		Logger::Log(true, ConsoleColor::RED, "[KDMP] Reading PsLoadedModuleList failed; all candidate bases were invalid.\n");
-        return;
-    }
+    constexpr size_t kMaxModules = 4096;
+    size_t mod_count = 0;
 
-    uint64_t current = reinterpret_cast<uint64_t>(listHead.Flink);
-    const uint64_t listHeadVA = psListHeadAddr;
-    const int kMaxModules = 4096;
-    int mod_count = 0;
+	const std::vector<ModuleInfo>& modules = Debugger.GetModules();
+	
+	for (const auto& mod : modules) {
+		const uint64_t imageBase = mod.BaseAddress;
+		const uint64_t imageSize = mod.Size;
 
-    while (current && current != listHeadVA && mod_count < kMaxModules) {
-        _LDR_DATA_TABLE_ENTRY ldr{};
-        if (!read_kdmp(current, &ldr, sizeof(ldr))) {
-			Logger::Log(true, ConsoleColor::YELLOW, "[KDMP] Failed to read LDR_DATA_TABLE_ENTRY (addr=0x%llx).\n", current);
-            break;
-        }
+		if (!mod.BaseAddress || !mod.Size) continue;
 
-        const uint64_t imageBase = reinterpret_cast<uint64_t>(ldr.DllBase);
-        const uint64_t imageSize = static_cast<uint64_t>(ldr.SizeOfImage);
+		std::string name = mod.ImageName;
 
-        std::wstring wname;
-        if (ldr.BaseDllName.Length && ldr.BaseDllName.Buffer) {
-            uint16_t len = ldr.BaseDllName.Length;
-            std::vector<wchar_t> buf((len / sizeof(wchar_t)) + 1, L'\0');
-            read_kdmp(reinterpret_cast<uint64_t>(ldr.BaseDllName.Buffer), buf.data(), len);
-            wname.assign(buf.data(), buf.data() + (len / sizeof(wchar_t)));
-        } else {
-            wname = L"(unknown)";
-        }
-        std::string name;
-        UnicodeToANSI(wname, name);
+		const uint64_t alignedStart = imageBase & ~0xfffull;
+		const uint64_t alignedEnd = (imageBase + imageSize + 0xfff) & ~0xfffull;
+		const uint64_t alignedSize = alignedEnd - alignedStart;
+		std::string baseNameNoExt = mod.Name;
 
-        if (imageBase && imageSize) {
-            const uint64_t alignedStart = imageBase & ~0xfffull;
-            const uint64_t alignedEnd   = (imageBase + imageSize + 0xfff) & ~0xfffull;
-            const uint64_t alignedSize  = alignedEnd - alignedStart;
-            std::string baseNameNoExt = basename_no_ext(name);
-            bool skip_by_name = false;
-            for (const auto &pn : processed_names) {
-                if (pn == baseNameNoExt || pn.find(baseNameNoExt) != std::string::npos || baseNameNoExt.find(pn) != std::string::npos) {
-                    skip_by_name = true;
-                    break;
-                }
-            }
+		if (!kdmp.VirtTranslate(alignedStart)) {
+			continue;
+		}
 
-            bool skip_by_range = false;
-            uint64_t imgStart = imageBase;
-            uint64_t imgEnd = imageBase + imageSize - 1;
-            for (auto *pf : peFiles) {
-                if (!pf) continue;
-                uint64_t peStart = pf->Base;
-                uint64_t peEnd = pf->End;
-				if (imgStart <= peEnd && imgEnd >= peStart) {
-                    skip_by_range = true;
-                    break;
-                }
-            }
+		bool skip_by_range = false;
+		uint64_t imgStart = imageBase;
+		uint64_t imgEnd = imageBase + imageSize - 1;
+		for (auto* pf : peFiles) {
+			if (!pf) continue;
+			uint64_t peStart = pf->Base;
+			uint64_t peEnd = pf->End;
+			if (imgStart <= peEnd && imgEnd >= peStart) {
+				skip_by_range = true;
+				break;
+			}
+		}
 
-            if (skip_by_name || skip_by_range) {
-                Logger::Log(true, ConsoleColor::YELLOW,
-					"[KDMP] Skip previously processed module: %s Base=0x%llx Size=0x%llx (by %s)\n",
-                    name.c_str(), imageBase, imageSize,
-                    skip_by_name ? "name" : "range");
-                current = reinterpret_cast<uint64_t>(ldr.InLoadOrderLinks.Flink);
-                continue;
-            }
+		if (skip_by_range) {
+			Logger::Log(true, ConsoleColor::YELLOW,
+				"[KDMP] Skip previously processed module: %s Base=0x%llx Size=0x%llx (by %s)\n",
+				name.c_str(), imageBase, imageSize,
+				"range");
+			continue;
+		}
 
-            void* host_buf = _aligned_malloc(static_cast<size_t>(alignedSize), 0x1000);
-            if (!host_buf) {
-				Logger::Log(true, ConsoleColor::RED, "[KDMP] Buffer allocation failed: %s Base=0x%llx Size=0x%llx\n", name.c_str(), imageBase, imageSize);
-            } else {
-                uint8_t* p = reinterpret_cast<uint8_t*>(host_buf);
-                for (uint64_t i = 0; i < alignedSize; ++i) p[i] = 0;
+		void* host_buf = _aligned_malloc(static_cast<size_t>(alignedSize), 0x1000);
+		if (!host_buf) {
+			Logger::Log(true, ConsoleColor::RED, "[KDMP] Buffer allocation failed: %s Base=0x%llx Size=0x%llx\n", name.c_str(), imageBase, imageSize);
+		}
+		else {
+			uint8_t* p = reinterpret_cast<uint8_t*>(host_buf);
+			std::memset(p, 0, alignedSize);
 
-                uint64_t filled = 0;
-                for (uint64_t addr = alignedStart; addr < alignedEnd; addr += 0x1000) {
-                    const uint8_t* page = kdmp.GetVirtualPage(addr);
-                    if (!page) continue;
-                    uint64_t off = addr - alignedStart;
-                    for (size_t i = 0; i < 0x1000; ++i) p[off + i] = page[i];
-                    filled += 0x1000;
-                }
+			uint64_t filled = 0;
+			for (uint64_t addr = alignedStart; addr < alignedEnd; addr += 0x1000) {
+				if (const uint8_t* page = kdmp.GetVirtualPage(addr)) {
+					std::memcpy(p + (addr - alignedStart), page, 0x1000);
+					filled += 0x1000;
+				}
+			}
 
-                bool already_mapped = false;
-                uint8_t probe = 0;
-                if (emu->try_read(alignedStart, &probe, sizeof(probe))) {
-                    already_mapped = true;
-                }
+			uint8_t probe = 0;
+			bool already_mapped = emu->try_read(alignedStart, &probe, sizeof(probe));
 
-                if (!already_mapped) {
-                    uc_err err = emu->mem_map_ptr(alignedStart, static_cast<size_t>(alignedSize), UC_PROT_ALL, host_buf);
-                    if (err != UC_ERR_OK) {
-						Logger::Log(true, ConsoleColor::RED, "[KDMP] uc_mem_map_ptr failed: %s err=%d Base=0x%llx Size=0x%llx\n",
-                            name.c_str(), err, alignedStart, alignedSize);
-                        _aligned_free(host_buf);
-                    } else {
-                        real_mem_map[alignedStart] = { host_buf, alignedSize };
-                        real_mem_map_type_all[alignedStart] = { host_buf, MUC_PROT_ALL };
+			if (!already_mapped) {
+				uc_err err = emu->mem_map_ptr(alignedStart, static_cast<size_t>(alignedSize), UC_PROT_ALL, host_buf);
+				if (err != UC_ERR_OK) {
+					Logger::Log(true, ConsoleColor::RED, "[KDMP] uc_mem_map_ptr failed: %s err=%d Base=0x%llx Size=0x%llx\n",
+						name.c_str(), err, alignedStart, alignedSize);
+					_aligned_free(host_buf);
+				}
+				else {
+					real_mem_map[alignedStart] = { host_buf, alignedSize };
+					real_mem_map_type_all[alignedStart] = { host_buf, MUC_PROT_ALL };
 
-                        Logger::Log(true, ConsoleColor::DARK_GREEN,
-							"[KDMP] Mapped driver: %s Base=0x%llx Size=0x%llx (filled: %llu KB, buffered mapping)\n",
-							name.c_str(), imageBase, imageSize, filled / 1024);
-                        ++mod_count;
-                    }
-                } else {
-                    _aligned_free(host_buf);
-                    Logger::Log(true, ConsoleColor::YELLOW,
-						"[KDMP] Skip already mapped module: %s Base=0x%llx Size=0x%llx (no overwrite)\n",
-                        name.c_str(), imageBase, imageSize);
-                }
-            }
-        }
-
-        current = reinterpret_cast<uint64_t>(ldr.InLoadOrderLinks.Flink);
-    }
+					Logger::Log(true, ConsoleColor::DARK_GREEN,
+						"[KDMP] Mapped driver: %s Base=0x%llx Size=0x%llx (filled: %llu KB, buffered mapping)\n",
+						name.c_str(), imageBase, imageSize, filled / 1024);
+					++mod_count;
+				}
+			}
+			else {
+				_aligned_free(host_buf);
+				Logger::Log(true, ConsoleColor::YELLOW,
+					"[KDMP] Skip already mapped module: %s Base=0x%llx Size=0x%llx (no overwrite)\n",
+					name.c_str(), imageBase, imageSize);
+			}
+		}
+	}
 
     if (mod_count >= kMaxModules) {
 		Logger::Log(true, ConsoleColor::YELLOW, "[KDMP] Module count reached limit %d; stopping early.\n", kMaxModules);
@@ -271,6 +151,7 @@ void PEloader::map_kuser_shared_data() {
 	Emu(uc)->write(KUSER_SHARED_DATA_ADDRESS + 0x2d4, &data, sizeof(data));
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "KUSER_SHARED_DATA mapped and initialized at 0x%llx \n", KUSER_SHARED_DATA_ADDRESS);
 }
+
 void PEloader::InitProcessor() {
 	auto emu = Emu(uc);
 	SegmentSelector cs = { 0 };
@@ -313,12 +194,9 @@ void PEloader::InitProcessor() {
 	emu->alloc(0x1000, kThreadBase & ~0xfff, MUC_PROT_ALL);
 	emu->write(kThreadBase & ~0xfff, kdmp.GetVirtualPage(kThreadBase & ~0xfff), 0x1000);
 
-
-
 	Object* kThreadObj = new Object("KThread", kThreadBase, 0x1000);
 	uint64_t currentApcState;
 	currentApcState = emu->read<uint64_t>(kThreadBase + 0x98);
-
 
 	uint64_t KPCRCB;
 
@@ -329,15 +207,11 @@ void PEloader::InitProcessor() {
 
 	emu->eflags(eflags.all);
 
-
-
 	uint64_t cr0 = 0x80050033;
 	uint64_t cr2 = 0x29c81264717;
 	uint64_t cr3 = 0x1ad000;
 	uint64_t cr4 = 0x3506f8;
 	uint64_t cr8 = 0xf;
-
-
 
 	emu->cr0(cr0);
 	emu->cr2(cr2);
@@ -373,12 +247,9 @@ void PEloader::InsertTailList(
 
 	emu->write(EntryAddress + offsetof(LIST_ENTRY, Flink), &ListHeadAddress, sizeof(ListHeadAddress));
 
-
 	emu->write(EntryAddress + offsetof(LIST_ENTRY, Blink), &Blink, sizeof(Blink));
 
-
 	emu->write((uint64_t)Blink + offsetof(LIST_ENTRY, Flink), &EntryAddress, sizeof(EntryAddress));
-
 
 	emu->write(ListHeadAddress + offsetof(LIST_ENTRY, Blink), &EntryAddress, sizeof(EntryAddress));
 }
@@ -404,7 +275,6 @@ void PEloader::Init() {
 	emu->alloc(0x1000, Rdx);
 	emu->write(Rdx, kdmp.GetVirtualPage(Rdx), 0x1000);
 	const wchar_t* driverName = L"\\Driver\\vgk";
-
 
 
 	auto drvObj = std::make_unique<_DRIVER_OBJECT>();
@@ -461,52 +331,55 @@ void PEloader::Init() {
 	emu->rdx(regPathAddr);
 }
 
-void PEloader::LoadDmp()
+bool PEloader::LoadDmp()
 {
 	std::string path = "mem.dmp";
-	kdmp.Parse(path.data());
+	if (!kdmp.Parse(path.data())) {
+		return false;
+	}
+
+	if (!Debugger.Initialize(path)) {
+		return false;
+	}
+
+	g_Debugger = &Debugger;
+
+	return true;
 }
 
+
 void PEloader::FixImport(uint64_t baseAddr, LIEF::PE::Binary::it_imports imports) {
-	int type = 1;
+
+	auto get_mod_name = [](std::string_view s) -> std::string {
+		if (s == "ntoskrnl.exe") {
+			return "nt";
+		}
+		size_t pos = s.find('.');
+		if (pos == std::string_view::npos) return std::string(s);
+		return std::string(s.substr(0, pos));
+	};
+
 	for (auto & import : imports) {
 		std::string dllName = import.name();
 		std::transform(dllName.begin(), dllName.end(), dllName.begin(),
 			[](unsigned char c) { return std::tolower(c); });
 
-		bool check = false;
-		for (int i = 0; i < peFiles.size(); i++)
-		{
-			if (peFiles[i]->FileName.find(dllName, 0) != std::string::npos)
-			{
-				type = i;
-				check = true;
-				break;
-			}
-		}
-		if (check == false)
-		{
-			type = peFiles.size();
-			LoadModule(dllName, type);
-		}
-
+		//
+		// TODO: what about some rare case that functions are imported via ordinal?
+		//
 		printf("Import DLL: %s\n", dllName.c_str());
 		for (auto & entry : import.entries()) {
 			std::string funcName = entry.name();
 			uint64_t iatAddr = baseAddr + entry.iat_address();
 			printf("Import function: %s\n", funcName.c_str());
-			try {
-				uint64_t funcRva = peFiles[type]->FuncAddr[funcName];
-				uint64_t funcAddr = peFiles[type]->Base + peFiles[type]->FuncAddr[funcName];
-				printf("Writing function address 0x%llx for %s at IAT 0x%llx\n", funcAddr, funcName.c_str(), iatAddr);
-				Emu(uc)->write(iatAddr, &funcAddr, sizeof(funcAddr));
-			}
-			catch (...)
-			{
-			}
+			auto func_name = std::format("{}!{}", get_mod_name(dllName), funcName);
+			uint64_t funcAddress = Debugger.Evaluate64(func_name.c_str());
 
+			if (!funcAddress) continue;
+
+			printf("Writing function address 0x%llx for %s at IAT 0x%llx\n", funcAddress, funcName.c_str(), iatAddr);
+			Emu(uc)->write(iatAddr, &funcAddress, sizeof(funcAddress));
 		}
-
 	}
 }
 
@@ -523,6 +396,7 @@ bool PEloader::LoadPE(const std::string path) {
 	pe->End = pe->Base + peBinary->virtual_size() - 1;
 	pe->memMap = malloc(peBinary->virtual_size());
 	peFiles.insert(peFiles.begin(), pe);
+
 	/* Security Cookie */
 	LIEF::PE::LoadConfiguration* loadConfig = peBinary->load_configuration();
 	uint64_t securityCookie = loadConfig->security_cookie();
@@ -574,9 +448,6 @@ bool PEloader::LoadPE(const std::string path) {
 
 void PEloader::LoadModule(const std::string path, int type) {
 	auto peBinary = LIEF::PE::Parser::parse(path);
-	if (path == "ntoskrnl.exe") {
-		int i = 0;
-	}
 	if (!peBinary) {
 		char mpath[MAX_PATH];
 		ExpandEnvironmentStringsA("%windir%\\System32\\", mpath, MAX_PATH);
@@ -597,8 +468,6 @@ void PEloader::LoadModule(const std::string path, int type) {
 
 	auto peSections = peBinary->sections();;
 	PEfile* pe = new PEfile_t();
-
-
 	uint64_t peHeaderSize = peBinary->optional_header().sizeof_headers();
 
 	std::ifstream file(path, std::ios::binary);
@@ -607,6 +476,7 @@ void PEloader::LoadModule(const std::string path, int type) {
 		std::cerr << "Failed to open file: " << path << std::endl;
 		return;
 	}
+
 	pe->memMap = malloc(peBinary->virtual_size());
 	file.read(reinterpret_cast<char*>(pe->memMap), peBinary->virtual_size());
 	file.close();
@@ -616,79 +486,7 @@ void PEloader::LoadModule(const std::string path, int type) {
 		pe->FuncRVA[i.address()] = i.name();
 		pe->FuncAddr[i.name()] = i.address();
 	}
-	if (path == "ntoskrnl.exe")
-	{
-		peBinary->optional_header().imagebase(0xfffff80507e17000);
-		pe->Base = peBinary->imagebase();
-	}
-
-	if (path == "CI.dll")
-	{
-		peBinary->optional_header().imagebase(0xfffff80509550000);
-		pe->Base = peBinary->imagebase();
-	}
-
-	if (path == "cng.sys")
-	{
-		peBinary->optional_header().imagebase(0xfffff80509640000);
-		pe->Base = peBinary->imagebase();
-	}
-
-	if (path == "ntoskrnl.exe" || path == "CI.dll" || path == "cng.sys") {
-
-		Emu(uc)->alloc(peBinary->virtual_size(), pe->Base);
-		Emu(uc)->write(pe->Base, pe->memMap, peHeaderSize);
-		pe->Entry = pe->Base + peBinary->optional_header().addressof_entrypoint();
-		pe->End = pe->Base + peBinary->virtual_size();
-		peFiles.push_back(pe);
-		uint64_t vsize = peBinary->virtual_size();
-		
-		for (const auto& section : peSections) {
-			uint64_t sectionAddress = pe->Base + section.virtual_address();
-			uint64_t sectionSize = PAGE_ALIGN(section.virtual_size());
-			auto sectionContent = section.content();
-			Emu(uc)->write(sectionAddress, sectionContent.data(), sectionContent.size());
-		}
-		if (path == "ntoskrnl.exe") {
-			this->PsLoadedModuleListBase = pe->Base + pe->FuncAddr["PsLoadedModuleList"];
-			uint64_t PsLoadedModuleList = this->PsLoadedModuleListBase;
-			Emu(uc)->write(this->PsLoadedModuleListBase, &PsLoadedModuleList, sizeof(PsLoadedModuleList));
-		}
-		int k = (pe->End - pe->Base) / 0x1000;
-		for (int i = 0; i < k; i++) {
-			auto page = kdmp.GetVirtualPage(pe->Base + i * 0x1000);
-			if (page != NULL) {
-				Emu(uc)->write(pe->Base + i * 0x1000, kdmp.GetVirtualPage(pe->Base + i * 0x1000), 0x1000);
-			}
-			else
-				Logger::Log(true, ConsoleColor::RED, "Page error : %llx\n", pe->Base + i * 0x1000);
-		}
-	}
-	else {
-		return;
-		if (pe->Base == 0)
-			pe->Base = AllDriverBaseAddr[path];
-		if (pe->Base != 0)
-			Emu(uc)->alloc(page, pe->Base);
-		else
-			pe->Base = Emu(uc)->HeapAlloc(page);
-
-		pe->Entry = pe->Base + peBinary->optional_header().addressof_entrypoint();
-		pe->End = pe->Entry + peBinary->virtual_size();
-		peFiles.push_back(pe);
-
-		Emu(uc)->write(pe->Base, pe->memMap, peHeaderSize);
-
-		for (const auto& section : peSections) {
-			uint64_t sectionAddress = pe->Base + section.virtual_address();
-			uint64_t sectionSize = PAGE_ALIGN(section.virtual_size());
-			auto sectionContent = section.content();
-
-			Emu(uc)->alloc(sectionSize, sectionAddress);
-
-			Emu(uc)->write(sectionAddress, sectionContent.data(), sectionContent.size());
-		}
-	}
+	
 	std::wstring temp;
 	ANSIToUnicode(path, temp);
 

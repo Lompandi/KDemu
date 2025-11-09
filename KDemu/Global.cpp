@@ -268,6 +268,7 @@ void ShowRegister(uc_engine* uc) {
 	emu->idtr(&idtr_base, &idtr_limit);
 	printf("GDTR Base: 0x%llx, Limit: 0x%x  IDTR Base: 0x%llx, Limit: 0x%x\n", gdtr_base, gdtr_limit, idtr_base, idtr_limit);
 
+	printf("Instruction: 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x");
 }
 
 

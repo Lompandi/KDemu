@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <mutex>
 #include "UnicornEmu.hpp"
+
 void gdbServer(uc_engine* uc, uint64_t entry) {
 	HMODULE hDll = LoadLibrary(TEXT("udbserver.dll"));
 	if (!hDll) {
@@ -53,12 +54,7 @@ void mainThread() {
 
 	DWORD length = GetCurrentDirectoryA(MAX_PATH, buffer);
 	std::string ntoskrnl2(buffer);
-	std::string cng(buffer);
-	std::string fltMgr(buffer);
 	std::string vgk(buffer);
-	std::string ntdll(buffer);
-	std::string halDll(buffer);
-	std::string cidll(buffer);
 
 	if (length > 0 && length < MAX_PATH)
 	{
@@ -71,17 +67,13 @@ void mainThread() {
 
 	peLoader.FILE_handle = 0x1000;
 	
-	peLoader.GetAllDriverBaseAddresses();
-	
 	Emu(uc)->alloc(0x1000, 0xffffffff00000000);
 	Emu(uc)->alloc(0x1000, 0x10000000, MUC_PROT_ALL);
 	uc_context_alloc(uc, &peLoader.ucContext);
 
-
 	Unicorn _uc{};
 	bool check = peLoader.LoadPE(vgk);
-	if (check == false)
-	{
+	if (check == false) {
 		return;
 	}
 
@@ -89,13 +81,6 @@ void mainThread() {
 	peLoader.InitProcessor();
 	peLoader.map_kuser_shared_data();
 	peLoader.MapAllDriversFromKdmp();
-
-
-
-
-
-
-
 
 	uc_hook trace, traces, trace_mem, trace_nt, t;
 	Emu(uc)->hook_add(&trace_mem, UC_HOOK_MEM_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
@@ -127,14 +112,11 @@ void mainThread() {
 			Emu(uc)->write(KdDebuggerNotPresentaddress, &KdDebuggerNotPresent, sizeof(KdDebuggerNotPresent));
 			Emu(uc)->write(KdDebuggerEnabledaddress, &KdDebuggerEnabled, sizeof(KdDebuggerEnabled));
 		}
-
 	}
 
 	peLoader.ExecuteFromRip = peLoader.peFiles[0]->Entry;
 
-
 	uc_err err;
-
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "entry: 0x%llx  0%llx \n", peLoader.peFiles[0]->Entry, peLoader.ExecuteFromRip);
 
 	while (true) {
@@ -174,14 +156,17 @@ void mainThread() {
 			}
 		}
 
-		Sleep(1000);	}
-
-
+		Sleep(1000);	
+	}
 }
 
 int main(int argc, char** argv, char** envp) {
 	PEloader& peLoader = PEloader::GetInstance();
-	peLoader.LoadDmp();
+
+	if (!peLoader.LoadDmp()) {
+		return EXIT_FAILURE;
+	}
+
 	InitializeCriticalSection(&peLoader.cs);
 	DWORD s = GetCurrentThreadId();
 	HANDLE thread = CreateThread(nullptr, 8192, (LPTHREAD_START_ROUTINE)mainThread, 0, 0, nullptr);

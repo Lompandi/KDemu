@@ -8,3 +8,5 @@
 /KDemu/x64/Debug
 /vcpkg_installed/x64-windows-static
 /x64/Debug
+/x64/Release
+/vcpkg_installed/x64-windows

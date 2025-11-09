@@ -17,6 +17,7 @@
 #include <thread>
 #include <tlhelp32.h>
 #include <mutex>
+
 #pragma comment(lib, "bcrypt.lib")
 int checknumh = 0;
 
