@@ -87,13 +87,13 @@ void mainThread() {
 	Emu(uc)->hook_add(&trace_mem, UC_HOOK_INSN_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
 	Emu(uc)->hook_add(&intr_hook, UC_HOOK_INTR, (void*)Unicorn::catch_error, nullptr, 1, 0);
 	for (const auto& pair : _uc.NtfuncMap) {
-		_uc.hook_File_func(uc, "t", pair.first, pair.second);
+		_uc.hook_File_func(uc, "nt", pair.first, pair.second);
 	}
 	for (const auto& pair : _uc.CngFuncMap) {
-		_uc.hook_File_func(uc, "t", pair.first, pair.second);
+		_uc.hook_File_func(uc, "cng", pair.first, pair.second);
 	}
 	for (const auto& pair : _uc.CiFuncMap) {
-		_uc.hook_File_func(uc, "t", pair.first, pair.second);
+		_uc.hook_File_func(uc, "ci", pair.first, pair.second);
 	}
 
 	for (auto object : peLoader.objectList) {

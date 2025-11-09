@@ -45,6 +45,8 @@ private:
 
 	std::vector<ModuleInfo> Modules_;
 
+	std::unordered_map<std::string, uint64_t> SymbolCache_;
+
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DumpedPages_;
 };
 

@@ -268,7 +268,17 @@ void ShowRegister(uc_engine* uc) {
 	emu->idtr(&idtr_base, &idtr_limit);
 	printf("GDTR Base: 0x%llx, Limit: 0x%x  IDTR Base: 0x%llx, Limit: 0x%x\n", gdtr_base, gdtr_limit, idtr_base, idtr_limit);
 
-	printf("Instruction: 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x");
+	std::array<uint8_t, 16> code = { 0 };
+	if (!emu->try_read(rip, code.data(), code.size())) {
+		printf("Instruction is not available\n");
+		return;
+	}
+
+	printf("Instruction: ");
+	for (int i = 0; i < code.size(); i++) {
+		printf("0x%02x ", code.at(i));
+	}
+	printf("\n");
 }
 
 

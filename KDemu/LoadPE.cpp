@@ -349,7 +349,6 @@ bool PEloader::LoadDmp()
 
 
 void PEloader::FixImport(uint64_t baseAddr, LIEF::PE::Binary::it_imports imports) {
-
 	auto get_mod_name = [](std::string_view s) -> std::string {
 		if (s == "ntoskrnl.exe") {
 			return "nt";
@@ -357,6 +356,13 @@ void PEloader::FixImport(uint64_t baseAddr, LIEF::PE::Binary::it_imports imports
 		size_t pos = s.find('.');
 		if (pos == std::string_view::npos) return std::string(s);
 		return std::string(s.substr(0, pos));
+	};
+
+	auto real_func_name = [](std::string_view s) -> std::string {
+		if (s.starts_with('_')) {
+			return std::string{ s.substr(1) }; // chop off leading '_'
+		}
+		return std::string{ s };
 	};
 
 	for (auto & import : imports) {
@@ -372,7 +378,7 @@ void PEloader::FixImport(uint64_t baseAddr, LIEF::PE::Binary::it_imports imports
 			std::string funcName = entry.name();
 			uint64_t iatAddr = baseAddr + entry.iat_address();
 			printf("Import function: %s\n", funcName.c_str());
-			auto func_name = std::format("{}!{}", get_mod_name(dllName), funcName);
+			auto func_name = std::format("{}!{}", get_mod_name(dllName), real_func_name(funcName));
 			uint64_t funcAddress = Debugger.Evaluate64(func_name.c_str());
 
 			if (!funcAddress) continue;

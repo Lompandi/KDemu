@@ -107,7 +107,7 @@ public:
 
 	uc_context* ucContext = nullptr;
 
-	std::map<uint64_t, std::pair<void*, uint64_t>>		real_mem_map;
+	std::map<uint64_t, std::pair<void*, uint64_t>>	  real_mem_map;
 	std::map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_read;
 	std::map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_read_write;
 	std::map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_all;

@@ -228,38 +228,6 @@ void Emulate::RtlTimeToTimeFields(uc_engine* uc, uint64_t address, uint32_t size
 
 void Emulate::RtlDuplicateUnicodeString(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "RtlDuplicateUnicodeString\n");
-	auto emu = Emu(uc);
-	uint64_t flags = emu->rcx();
-    uint64_t string_ptr = emu->rdx();
-    uint64_t dest_ptr = emu->r8();
-	UNICODE_STRING string = emu->read<UNICODE_STRING>(string_ptr);
-	if (string.Buffer != NULL && string.Length > 0) {
-		std::wstring unicode_str = read_unicode_string(uc, string_ptr);
-
-		std::string utf8_str;
-		for (wchar_t wc : unicode_str) {
-			if (wc < 128) {
-				utf8_str += static_cast<char>(wc);
-			}
-			else {
-				utf8_str += '?';
-    		}
-		}
-		Logger::Log(true, ConsoleColor::RED, "Unicode String: %s\n", utf8_str.c_str());
-	}
-	else {
-		Logger::Log(true, ConsoleColor::RED, "Unicode String is empty or null.\n");
-	}
-
-	UNICODE_STRING dest_string;
-	dest_string.Length = string.Length;
-	dest_string.MaximumLength = string.MaximumLength;
-	dest_string.Buffer = string.Buffer;
-    emu->write(dest_ptr, &dest_string, sizeof(UNICODE_STRING));
-
-	uint64_t status = 0;
-    emu->rax(status);
-	RetHook(uc);
 }
 
 void Emulate::RtlCompareMemory(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
@@ -309,8 +277,6 @@ void Emulate::atol(uc_engine* uc, uint64_t address, uint32_t size, void* user_da
 	RetHook(uc);
 }
 void Emulate::ExAllocatePoolWithTag(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
-
-
 	auto emu = Emu(uc);
 	uint64_t rcx_value = emu->rcx();
 	int a1 = static_cast<int>(rcx_value & 0xFFFFFFFF);
@@ -320,23 +286,18 @@ void Emulate::ExAllocatePoolWithTag(uc_engine* uc, uint64_t address, uint32_t si
 	Logger::Log(true, ConsoleColor::RED, "ExAllocatePoolWithTag : called with PoolType: %d , NumberOfBytes: %lld,  Tag: %llx\n", a1, a2, a3);
 	allocated_address = HeapAlloc(uc, a2, false);
 	emu->rax(allocated_address);
+
+
+
 	RetHook(uc);
 }
+
 void Emulate::ExFreePoolWithTag(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "ExFreePoolWithTag\n");
 	auto emu = Emu(uc);
 	uint64_t free_address = emu->rcx();
     uint64_t tag = emu->rdx();
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "called for address: 0x%llx , Tag : 0x%llx \n", free_address, tag);
-
-
-
-
-
-
-
-
-
 
 	emu->rax(0);
 	uint64_t rsp = emu->rsp();
@@ -491,8 +452,6 @@ void Emulate::ZwCreateSection(uc_engine* uc, uint64_t address, uint32_t size, vo
 
 	DWORD secAttrib = (AllocationAttributes & 0x1000000) ? SEC_COMMIT : SEC_RESERVE;
 
-
-
 	HANDLE hSection = CreateFileMappingW(
 		(HANDLE)FileHandle, nullptr,
 		protect | secAttrib,
@@ -516,7 +475,6 @@ void Emulate::ZwCreateSection(uc_engine* uc, uint64_t address, uint32_t size, vo
 }
 
 void Emulate::ZwClose(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
-
 
 	Logger::Log(true, ConsoleColor::RED, "ZwClose\n");
 	auto emu = Emu(uc);
@@ -1085,7 +1043,6 @@ void Emulate::RtlLookupFunctionEntry(uc_engine* uc, uint64_t address, uint32_t s
 	rdxtemp = emu->qword(rdx);
 	historyTable = emu->read<UNWIND_HISTORY_TABLE>(r8);
 	uint64_t rsp;*/
-
 
 }
 
@@ -1711,7 +1668,6 @@ void Emulate::_swprintf_s(uc_engine* uc, uint64_t address, uint32_t size, void* 
 	restore_threads();
 }
 
-
 void Emulate::KeInsertQueueApc(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "KeInsertQueueApc\n");
 	auto emu = Emu(uc);
@@ -1849,6 +1805,7 @@ void Emulate::_vsnwprintf(uc_engine* uc, uint64_t address, uint32_t size, void* 
 		loader->errorevent = nullptr;
 	}
 }
+
 void Emulate::KeInitializeTimer(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "KeInitializeTimer\n");
 
@@ -1987,42 +1944,28 @@ void Emulate::ExAcquireRundownProtection(uc_engine* uc, uint64_t address, uint32
 }
 
 
-
 void Emulate::_wcscpy_s(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "_wcscpy_s\n");
 	auto emu = Emu(uc);
 	uint64_t dest_addr = emu->rcx();
-
 	rsize_t destsz = static_cast<rsize_t>(emu->rdx());
-
 	uint64_t src_addr = emu->r8();
+
+	uint64_t rbp = emu->rbp();
+
 	std::wstring src_str;
 	read_null_unicode_string(uc, src_addr, src_str);
-	uint64_t rbp = emu->rbp();
 	uint64_t rbpValue;
-
 	rbpValue = emu->read<uint64_t>(rbp - 0x49);
-	size_t total_length = src_str.length() + 1;
 
+	size_t total_length = src_str.length() + 1;
 	if (total_length * sizeof(wchar_t) > destsz) {
 		Logger::Log(true, ConsoleColor::RED, "wcscpy_s: Buffer too small need %zu bytes; Got %zu bytes\n", total_length * sizeof(wchar_t), destsz);
-
-
-		uint64_t error_code = 22;
-    	emu->rax(error_code);
-		RetHook(uc);
-		return;
 	}
 
-	emu->write(dest_addr, src_str.c_str(), total_length * sizeof(wchar_t));
-
 	Logger::Log(true, ConsoleColor::RED, "wcscpy_s: Copied string = %s\n", std::string(src_str.begin(), src_str.end()));
-
-	uint64_t success_code = 0;
-	emu->rax(success_code);
-
-	RetHook(uc);
 }
+
 void Emulate::KeIpiGenericCall(uc_engine* uc, uint64_t address, uint32_t size, void* user_data)
 {
 	Logger::Log(true, ConsoleColor::RED, "KeIpiGenericCall\n");
@@ -2031,9 +1974,8 @@ void Emulate::KeIpiGenericCall(uc_engine* uc, uint64_t address, uint32_t size, v
     uint64_t context = emu->rdx();
 	emu->rip(routine);
 	Logger::Log(true, 12, " jmp to %llx\n", routine);
-
-
 }
+
 void Emulate::KdChangeOption(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "KdChangeOption\n");
 	auto emu = Emu(uc);
@@ -2056,6 +1998,7 @@ void Emulate::MmIsAddressValid(uc_engine* uc, uint64_t address, uint32_t size, v
 
 	RetHook(uc);
 }
+
 void Emulate::RtlInitializeBitMap(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "RtlInitializeBitMap\n");
 	auto emu = Emu(uc);
@@ -3276,21 +3219,20 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 	errU = uc_hook_add(ti->tuc, &trace_mem, UC_HOOK_INSN_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
 	errU = uc_hook_add(ti->tuc, &intr_hook, UC_HOOK_INTR, (void*)Unicorn::catch_error, nullptr, 1, 0);
 	Unicorn _uc{};
-	for (const auto& pair : _uc.NtfuncMap) {
-		_uc.hook_File_func(ti->tuc, "t", pair.first, pair.second);
+	for (const auto& [func_name, callback] : _uc.NtfuncMap) {
+		_uc.hook_File_func(ti->tuc, "nt", func_name, callback);
 	}
-	for (const auto& pair : _uc.CngFuncMap) {
-		_uc.hook_File_func(ti->tuc, "t", pair.first, pair.second);
+	for (const auto& [func_name, callback] : _uc.CngFuncMap) {
+		_uc.hook_File_func(ti->tuc, "cng", func_name, callback);
 	}
-	for (const auto& pair : _uc.CiFuncMap) {
-		_uc.hook_File_func(ti->tuc, "t", pair.first, pair.second);
+	for (const auto& [func_name, callback] : _uc.CiFuncMap) {
+		_uc.hook_File_func(ti->tuc, "ci", func_name, callback);
 	}
 	for (auto object : loader->objectList) {
 		uc_hook_add(ti->tuc, &t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object, object->address, object->address + object->size);
 	}
 
 	uc_hook_add(ti->tuc, &t, UC_HOOK_CODE, Unicorn::register_hook, NULL, 1, 0);
-
 
 	uc_context_restore(ti->tuc, ti->uc_ctx);
 
@@ -3305,7 +3247,6 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 	threadEmu->write(rsp_MapBase, buffer.data(), buffer.size());
 	threadEmu->rsp(rsp);
 
-
 	Logger::Log(true, ConsoleColor::RED, "TI routineStart: %llx\n", ti->routineStart);
 	for (auto& ti : loader->Threads) {
 		SetEvent(ti->Event);
@@ -3318,8 +3259,6 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 		Logger::Log(true, ConsoleColor::RED, "uc_emu_start error: %d\n", uc_check);
 	}
 	DWORD tid = GetCurrentThreadId();
-
-
 	Logger::Log(true, ConsoleColor::YELLOW, "Thread is about to terminate \n");
 	for (auto& ti : loader->Threads) {
 		SetEvent(ti->Event);
@@ -3334,8 +3273,6 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 
 	return;
 }
-
-
 
 void Emulate::PsCreateSystemThread(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	auto emu = Emu(uc);

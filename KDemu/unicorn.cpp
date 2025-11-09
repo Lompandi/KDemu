@@ -56,25 +56,8 @@ void Unicorn::seh_Handle(uc_engine* uc)
 	Sleep(10);
 }
 
-// DEBUG
-static uint64_t prevPc = 0;
-
-// DEBUG
-static bool InModule(uint64_t address) {
-	return (address >= 0xfffff805dc9a0000 && address <= 0xfffff805dea04000);
-}
-
 void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, void* user_data)
 {
-	// DEBUG
-	if (InModule(prevPc) && !InModule(address)) {
-		if (auto name = g_Debugger->GetName(address, true); !name.empty()) {
-			Logger::Log(true, ConsoleColor::DARK_YELLOW, "calling 0x%llx(%s)\n", address, name.c_str());
-		}
-	}
-
-	prevPc = address;
-
 	PEloader* loader = &PEloader::GetInstance();
 	auto emu = Emu(uc);
 	if (loader->errorevent != nullptr)
@@ -262,6 +245,7 @@ void Unicorn::catch_error(uc_engine* uc, int exception, void* user_data) {
 		uc_hook_add(uc, &t, UC_HOOK_CODE, Unicorn::register_hook, NULL, rip, rip + 10);
 		return;
 	}
+
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "exception # 0x%x \n", exception);
 	seh_Handle(uc);
 	return;
@@ -577,7 +561,7 @@ bool Unicorn::hook_mem_invalid(uc_engine* uc, uc_mem_type type, uint64_t address
 			dump_stack(uc, rsp, 10);
 		}
 		break;
-	case UC_MEM_FETCH_UNMAPPED:
+	case UC_MEM_FETCH_UNMAPPED: {
 		for (auto& map : loader->real_mem_map)
 		{
 			aligned_address = map.first;
@@ -663,9 +647,22 @@ bool Unicorn::hook_mem_invalid(uc_engine* uc, uc_mem_type type, uint64_t address
 		Logger::Log(true, ConsoleColor::RED, "------------------------------\n");
 		Logger::Log(true, ConsoleColor::RED, "EXECUTE from unmapped memory Address : 0x%llx\n", address);
 		Logger::Log(true, ConsoleColor::RED, "------------------------------\n");
-		Logger::Log(true, ConsoleColor::DARK_GREEN, "Previous_address : %llx\n", Previous_address);
-		break;
 
+		Logger::Log(true, ConsoleColor::DARK_GREEN, "Previous_address : %llx\n", Previous_address);
+
+		std::array<uint8_t, 16> code = { 0 };
+		if (!Emu(uc)->try_read(Previous_address, code.data(), code.size())) {
+			printf("Instruction is not available\n");
+			break;
+		}
+
+		printf("Instruction: ");
+		for (int i = 0; i < code.size(); i++) {
+			printf("0x%02x ", code.at(i));
+		}
+		printf("\n");
+		break;
+	}
 	default:
 		Logger::Log(true, ConsoleColor::RED, "------------------------------\n");
 		Logger::Log(true, ConsoleColor::RED, "Unknown memory error Address : 0x%llx\n", address);
@@ -727,13 +724,17 @@ void Unicorn::hook_mem_write(uc_engine* uc, uc_mem_type type, uint64_t address, 
 	Logger::Log(true, 11, "RIP : 0x%llx Write in address: 0x%llx Value: %llx\n", addr, address, value);
 }
 
-void Unicorn::hook_File_func(uc_engine* uc, std::string fileName, std::string funcName, void(*func)(uc_engine*, uint64_t, uint32_t, void*)) {
+void Unicorn::hook_File_func(uc_engine* uc, std::string modName, std::string funcName, void(*func)(uc_engine*, uint64_t, uint32_t, void*)) {
+	
 	for (auto& peFile : loader->peFiles) {
-		uint64_t Base = peFile->Base;
-		uint64_t RVA = peFile->FuncAddr[funcName];
+		auto fullFuncName = std::format("{}!{}", modName, funcName);
+		uint64_t funcVa = g_Debugger->GetSymbol(fullFuncName.c_str());
+
+		// Logger::Log(true, YELLOW, "hooking function %s at 0x%llx\n", fullFuncName.c_str(), funcVa);
+
 		uc_hook trace;
-		if (RVA != 0) {
-			uc_hook_add(uc, &trace, UC_HOOK_CODE, (void*)func, NULL, Base + RVA, Base + RVA + sizeof(uint8_t));
+		if (funcVa != 0) {
+			uc_hook_add(uc, &trace, UC_HOOK_CODE, (void*)func, NULL, funcVa, funcVa + sizeof(uint8_t));
 		}
 	}
 }

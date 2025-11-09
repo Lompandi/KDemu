@@ -11,6 +11,13 @@ static std::map<std::string, uint64_t> registryHandles = {
 #define WSTRING_TO_VECTOR(str) std::vector<uint8_t>(reinterpret_cast<const uint8_t*>(str), \
                                                    reinterpret_cast<const uint8_t*>(str) + (wcslen(str) + 1) * sizeof(wchar_t))
 
+
+//
+// The commented-out hooks can be integrated directly into the runtime
+// if only want to monitor events, as they have minimal impact
+// on performance.
+//
+
 class Emulate {
 private:
 	static PEloader* loader;
@@ -344,12 +351,10 @@ public:
 	static void hook_mem_write(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user_data);
 	static bool hook_mem_invalid(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user_data);
 	static void hook_access_object(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user_data);
-	static void hook_File_func(uc_engine* uc, std::string fileName, std::string funcName, void(*func)(uc_engine*, uint64_t, uint32_t, void*));
-
+	static void hook_File_func(uc_engine* uc, std::string modName, std::string funcName, void(*func)(uc_engine*, uint64_t, uint32_t, void*));
 
 	static bool check_is_ntFunc(uint64_t _register);
 	static bool check_is_ntFunc_noNext(uint64_t _register);
-
 };
 
 

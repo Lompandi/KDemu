@@ -156,6 +156,7 @@ const std::vector<ModuleInfo>& Debugger_t::GetModules() const {
 
 std::uint64_t Debugger_t::GetSymbol(std::string_view Name) const {
     uint64_t Offset = 0;
+
     HRESULT Status = Symbols_->GetOffsetByName(Name.data(), &Offset);
     if (FAILED(Status)) {
         if (Status == S_FALSE) {
