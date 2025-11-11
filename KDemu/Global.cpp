@@ -84,6 +84,14 @@ void UnicodeToANSI(const std::wstring& str, std::string& out) {
 	WideCharToMultiByte(CP_ACP, 0, str.c_str(), (int)str.length(), (LPSTR)out.data(), len, NULL, NULL);
 }
 
+std::string U16StringToString(const std::u16string& str) {
+	std::string Out;
+	for (const char16_t& C : str) {
+		Out.push_back(char(C));
+	}
+	return Out;
+}
+
 void ANSIToUnicode(const std::string& str, std::wstring& out) {
 	int len = MultiByteToWideChar(CP_ACP, 0, str.c_str(), (int)str.length(), NULL, 0);
 	out.resize(len);
@@ -181,13 +189,13 @@ void print_xmm_register(const char* reg, const uint8_t* value, int length) {
 	Logger::Log(false,ConsoleColor::DARK_GREEN, "\n");
 }
 
-
 void dump_stack(uc_engine* uc, uint64_t rsp, size_t num_entries) {
 	auto emu = Emu(uc);
 	std::vector<uint8_t> raw = emu->read(rsp, num_entries * sizeof(uint64_t));
 	const uint64_t* stack_content = reinterpret_cast<const uint64_t*>(raw.data());
 
 	Logger::Log(true,ConsoleColor::DARK_GREEN, "Stack contents near RSP (0x%llx)\n", rsp);
+
 	for (size_t i = 0; i < num_entries; i++) {
 		Logger::Log(false,ConsoleColor::DARK_GREEN, "  [0x%llx] = 0x%llx\n", (rsp + i * sizeof(uint64_t)), stack_content[i]);
 	}

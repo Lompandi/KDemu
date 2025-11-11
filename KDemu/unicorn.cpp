@@ -15,11 +15,7 @@ namespace {
 	constexpr size_t kPageSize = 0x1000;
 	inline bool match(const uint8_t* buf, uint32_t size, std::initializer_list<uint8_t> pattern) {
 		if (size < pattern.size()) return false;
-		size_t i = 0;
-		for (auto b : pattern) {
-			if (buf[i++] != b) return false;
-		}
-		return true;
+		return !std::memcmp(buf, pattern.begin(), pattern.size());
 	}
 
 	inline int32_t read_disp32_at(const uint8_t* buf, uint32_t size, uint32_t offset) {
@@ -71,17 +67,30 @@ void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, vo
 		}
 	}
 
+	//DEBUG!!
+	auto InModule = [](uint64_t address) -> bool {
+		return 0xfffff8014fe90000 >= address && address <= 0xfffff80152723000;
+	};
+
 	std::vector<uint8_t> code = emu->read(address, size);
 	if (size >= 1) {
-		if (match(code.data(), size, { 0xFA })) {
+		/*if (match(code.data(), size, {0xFA}) && InModule(address)) [[unlikely]] {
 			Logger::Log(true, 12, "Clearing Interrupts %llx\n", address);
 		}
-		if (match(code.data(), size, { 0xFB })) {
+		if (match(code.data(), size, { 0xFB }) && InModule(address)) [[unlikely]] {
+			Logger::Log(true, 12, "Restoring Interrupts %llx\n", address);
+		}*/
+		if (code.data()[0] == 0xFA && InModule(address)) {
+			Logger::Log(true, 12, "Clearing Interrupts %llx\n", address);
+		}
+		else if (code.data()[0] == 0xFB && InModule(address)) {
 			Logger::Log(true, 12, "Restoring Interrupts %llx\n", address);
 		}
 	}
 	if (size >= 2) {
-		if (match(code.data(), size, { 0x48, 0xCF })) {
+		// !std::memcmp(code.data(),"\x48\xcf", 2)
+		// if (match(code.data(), size, { 0x48, 0xCF })) {
+		if(!std::memcmp(code.data(), "\x48\xCF", 2)) {
 			Logger::Log(true, 13, "IRET %llx\n", address);
 
 			uint64_t old_rsp = emu->rsp();
@@ -97,11 +106,13 @@ void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, vo
 			emu->rsp(new_rsp);
 			emu->rip(new_rip);
 		}
-		if (match(code.data(), size, { 0x0f, 0x05 })) {
+		// if (match(code.data(), size, { 0x0f, 0x05 })) {
+		if(!std::memcmp(code.data(), "\x0F\x05", 2)) {
 			Logger::Log(true, 13, "SYSCALL  address: %llx \n", address);
 			ShowRegister(uc);
 		}
-		if (match(code.data(), size, { 0x0F, 0x20 })) {
+		// if (match(code.data(), size, { 0x0F, 0x20 })) {
+		if(!std::memcmp(code.data(), "\x0F\x20", 2)) {
 			Logger::Log(true, 13, "Read CR0 register address: %llx \n", address);
 			/*return;
 			uint64_t cr0 = emu->cr0();
@@ -111,7 +122,8 @@ void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, vo
 			emu->rip(address);
 			ShowRegister(uc);*/
 		}
-		if (match(code.data(), size, { 0x0F, 0x30 })) {
+		// if (match(code.data(), size, { 0x0F, 0x30 })) {
+		if(!std::memcmp(code.data(), "\x0F\x30", 2)) {
 			uint64_t rip = emu->rip();
 			uint64_t rcx = emu->rcx();
 			uint32_t edx = emu->edx();
@@ -131,7 +143,8 @@ void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, vo
 				return;
 			}
 		}
-		if (match(code.data(), size, { 0x0f, 0x32 })) {
+		// if (match(code.data(), size, { 0x0f, 0x32 })) {
+		if(!std::memcmp(code.data(), "\x0F\x32", 2)) {
 			uint64_t rcx = emu->rcx();
 			Logger::Log(true, 12, "RDMSR %llx\n", rcx);
 			Logger::Log(true, 10, "Addr: %llx\n", address);
@@ -152,7 +165,8 @@ void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, vo
 			}
 
 		}
-		if (match(code.data(), size, { 0xCD, 0x20 }))
+		// if (match(code.data(), size, { 0xCD, 0x20 }))
+		if(!std::memcmp(code.data(), "\xCD\x20", 2))
 		{
 			Logger::Log(true, 12, "INT 20\n");
 			uint64_t rip = emu->rip();
@@ -162,39 +176,42 @@ void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, vo
 	}
 
 	if (size >= 3) {
-		if (match(code.data(), size, { 0x0F, 0x23 })) {
-			if (size >= 3) {
-				uint8_t modrm = code[2];
-				uint8_t reg = (modrm >> 3) & 0x7;
-				if (reg <= 7) {
-					int dr_reg_id = UC_X86_REG_DR0 + reg;
-					uint64_t value;
-					uc_reg_read(uc, dr_reg_id, &value);
-					Logger::Log(true, ConsoleColor::DARK_GREEN, "DR%d  modified at 0x%llx with value 0x%llx \n", int(reg), address, value);
-				}
+		// if (match(code.data(), size, { 0x0F, 0x23 })) {
+		if(!std::memcmp(code.data(), "\x0F\x23", 2)) {
+			uint8_t modrm = code[2];
+			uint8_t reg = (modrm >> 3) & 0x7;
+			if (reg <= 7) {
+				int dr_reg_id = UC_X86_REG_DR0 + reg;
+				uint64_t value;
+				uc_reg_read(uc, dr_reg_id, &value);
+				Logger::Log(true, ConsoleColor::DARK_GREEN, "DR%d  modified at 0x%llx with value 0x%llx \n", int(reg), address, value);
 			}
 		}
-		if (match(code.data(), size, { 0x0f, 0x01, 0xF8 })) {
+		// if (match(code.data(), size, { 0x0f, 0x01, 0xF8 })) {
+		if(!std::memcmp(code.data(), "\x0F\x01\xF8", 3)) {
 			Logger::Log(true, ConsoleColor::RED, "SWAPGS\n");
 		}
-		if (match(code.data(), size, { 0x0F, 0x01, 0xF9 }))
-		{
+		// if (match(code.data(), size, { 0x0F, 0x01, 0xF9 }))
+		if (!std::memcmp(code.data(), "\x0F\x01\xF9", 3)) {
 			uint64_t fake_tsc = (uint64_t)__rdtsc();
 			emu->rax(fake_tsc);
 			Logger::Log(true, 13, "rdtscp!!!!!!!!!!! address: %llx code: %x\n", address, code[2]);
 			address += 3;
 			emu->rip(address);
 		}
-		if (match(code.data(), size, { 0x0F, 0x20, 0xD8 }))
-		{
+		// if (match(code.data(), size, { 0x0F, 0x20, 0xD8 }))
+		if (!std::memcmp(code.data(), "\x0F\x20\xD8", 3)) {
 			uint64_t rcx = emu->rcx();
 			Logger::Log(true, 13, "Suck my CR3 DICK~~~~~~~~~~~~~~~~~~~~~~~~~~!!!!!!!!!!! address: %llx code: %x\n", address, code[2]);
 		}
 
-		if (match(code.data(), size, { 0x0F, 0x20 })) {
+		// if (match(code.data(), size, { 0x0F, 0x20 })) {
+		if (!std::memcmp(code.data(), "\x0F\x20", 2)) {
 			Logger::Log(true, 13, "Read CR register address: %llx code: %x\n", address, code[2]);
 		}
-		if (size >= 4 && match(code.data(), size, { 0xF0, 0x0F, 0xB1 }))
+
+		//if (size >= 4 && match(code.data(), size, { 0xF0, 0x0F, 0xB1 }))
+		if (size >= 4 && !std::memcmp(code.data(), "\xF0\x0F\xB1", 3))
 		{
 			uint64_t rcx = emu->rcx();
 			if (code[3] == 0x0D)
@@ -220,7 +237,7 @@ void Unicorn::register_hook(uc_engine* uc, uint64_t address, const byte size, vo
 		}
 	}
 
-	if (size >= 4) {
+	if (size >= 4) [[unlikely]] {
 		if (match(code.data(), size, { 0x41, 0x0f, 0x01 })) {
 			Logger::Log(true, 13, "Read CR0 register address: %llx \n", address);
 		}
@@ -415,7 +432,7 @@ bool Unicorn::hook_mem_invalid(uc_engine* uc, uc_mem_type type, uint64_t address
 
 		break;
 	case UC_MEM_FETCH_PROT:
-		for (auto& map : loader->real_mem_map_type_read)
+		for (const auto& map : loader->real_mem_map_type_read)
 		{
 			aligned_address = map.first;
 			msize = loader->real_mem_map[aligned_address].second;
@@ -685,6 +702,7 @@ void Unicorn::hook_access_object(uc_engine* uc, uc_mem_type type, uint64_t addre
 	Object* obj = (Object*)user_data;
 	uint64_t rip;
 	uc_reg_read(uc, UC_X86_REG_RIP, &rip);
+
 	switch (type) {
 	case UC_MEM_READ:
 		uc_mem_read(uc, address, &value, sizeof(value));

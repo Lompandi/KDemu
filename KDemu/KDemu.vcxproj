@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClCompile Include="Debugger.cpp" />
     <ClCompile Include="Emulate.cpp" />
+    <ClCompile Include="FsHooks.cpp" />
     <ClCompile Include="Global.cpp" />
     <ClCompile Include="KDemu.cpp" />
     <ClCompile Include="LoadPE.cpp" />
@@ -30,6 +31,7 @@
     <ClInclude Include="cpu.h" />
     <ClInclude Include="Debugger.h" />
     <ClInclude Include="Emulate.hpp" />
+    <ClInclude Include="FsHooks.h" />
     <ClInclude Include="Global.h" />
     <ClInclude Include="LoadPE.hpp" />
     <ClInclude Include="NtType.hpp" />

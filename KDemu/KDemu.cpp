@@ -58,8 +58,9 @@ void mainThread() {
 
 	if (length > 0 && length < MAX_PATH)
 	{
-		vgk += "\\vgk_new.sys";
-		Logger::Log(true, ConsoleColor::DARK_GREEN, "Full path: %s \n", ntoskrnl2);
+		// DEBUG!
+		vgk += "\\vgk_new.sys";// "\\multithread.sys";// "\\vgk_new.sys";
+		Logger::Log(true, ConsoleColor::DARK_GREEN, "Full path: %s \n", ntoskrnl2.c_str());
 	}
 	else {
 		std::cerr << "Error getting current directory" << std::endl;
@@ -86,33 +87,29 @@ void mainThread() {
 	Emu(uc)->hook_add(&trace_mem, UC_HOOK_MEM_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
 	Emu(uc)->hook_add(&trace_mem, UC_HOOK_INSN_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
 	Emu(uc)->hook_add(&intr_hook, UC_HOOK_INTR, (void*)Unicorn::catch_error, nullptr, 1, 0);
-	for (const auto& pair : _uc.NtfuncMap) {
-		_uc.hook_File_func(uc, "nt", pair.first, pair.second);
+	for (const auto& [func_name, hook] : _uc.NtfuncMap) {
+		_uc.hook_File_func(uc, "nt", func_name, hook);
 	}
-	for (const auto& pair : _uc.CngFuncMap) {
-		_uc.hook_File_func(uc, "cng", pair.first, pair.second);
+	for (const auto& [func_name, hook] : _uc.CngFuncMap) {
+		_uc.hook_File_func(uc, "cng", func_name, hook);
 	}
-	for (const auto& pair : _uc.CiFuncMap) {
-		_uc.hook_File_func(uc, "ci", pair.first, pair.second);
+	for (const auto& [func_name, hook] : _uc.CiFuncMap) {
+		_uc.hook_File_func(uc, "ci", func_name, hook);
 	}
 
 	for (auto object : peLoader.objectList) {
 		Emu(uc)->hook_add(&t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object, object->address, object->address + object->size);
 	}
+
 	Emu(uc)->hook_add(&t, UC_HOOK_CODE, Unicorn::register_hook, NULL, 1, 0);
 	bool KdDebuggerNotPresent = 1;
 	bool KdDebuggerEnabled = 0;
-	for (auto& peFile : peLoader.peFiles)
-	{
-		if (peFile->FileName == "ntoskrnl.exe")
-		{
-			uint64_t KdDebuggerNotPresentaddress = peFile->Base + peFile->FuncAddr["KdDebuggerNotPresent"];
-			uint64_t KdDebuggerEnabledaddress = peFile->Base + peFile->FuncAddr["KdDebuggerEnabled"];
-			peLoader.RtlRaiseStatusBase = peFile->Base + peFile->FuncAddr["RtlRaiseStatus"];
-			Emu(uc)->write(KdDebuggerNotPresentaddress, &KdDebuggerNotPresent, sizeof(KdDebuggerNotPresent));
-			Emu(uc)->write(KdDebuggerEnabledaddress, &KdDebuggerEnabled, sizeof(KdDebuggerEnabled));
-		}
-	}
+
+	uint64_t KdDebuggerNotPresentaddress = g_Debugger->Evaluate64("nt!KdDebuggerNotPresent");
+	uint64_t KdDebuggerEnabledaddress = g_Debugger->Evaluate64("nt!KdDebuggerEnabled");
+	peLoader.RtlRaiseStatusBase = g_Debugger->Evaluate64("nt!RtlRaiseStatus");
+	Emu(uc)->try_write(KdDebuggerNotPresentaddress, &KdDebuggerNotPresent, sizeof(KdDebuggerNotPresent));
+	Emu(uc)->try_write(KdDebuggerEnabledaddress, &KdDebuggerEnabled, sizeof(KdDebuggerEnabled));
 
 	peLoader.ExecuteFromRip = peLoader.peFiles[0]->Entry;
 
@@ -136,6 +133,7 @@ void mainThread() {
 		}
 		printf("ExecuteFromRip %llx\n", peLoader.ExecuteFromRip);
 	}
+
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "Main thread exited\n");
 	DWORD exitCode = 0;
 	while (true) {
@@ -163,7 +161,8 @@ void mainThread() {
 int main(int argc, char** argv, char** envp) {
 	PEloader& peLoader = PEloader::GetInstance();
 
-	if (!peLoader.LoadDmp()) {
+	// DEBUG - Change this if needed
+	if (!peLoader.LoadDmp(R"(E:\KDemu-feat\KDemu\x64\Release)")) {
 		return EXIT_FAILURE;
 	}
 

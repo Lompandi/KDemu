@@ -1,6 +1,8 @@
 #pragma once
 
 #include <dbgeng.h>
+
+#include <optional>
 #include <filesystem>
 #include <unordered_map>
 
@@ -36,6 +38,13 @@ public:
 
 	std::uint64_t Evaluate64(const char* Expr) const;
 
+	uint64_t Reg64(std::string_view name) const;
+
+	//
+	// Get system module information via IMAGE NAME (i.e. "ntoskrnl.exe", ...)
+	//
+	std::optional<ModuleInfo> GetModule(std::string_view modName) const;
+
 private:
 	IDebugClient4* Client_;
 	IDebugControl4* Control_;
@@ -44,8 +53,6 @@ private:
 	IDebugSymbols3* Symbols_;
 
 	std::vector<ModuleInfo> Modules_;
-
-	std::unordered_map<std::string, uint64_t> SymbolCache_;
 
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DumpedPages_;
 };

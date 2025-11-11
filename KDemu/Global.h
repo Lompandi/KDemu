@@ -1,4 +1,7 @@
 #pragma once
+
+// #define WIN32_LEAN_AND_MEAN
+
 #include <Windows.h>
 #include <unicorn/unicorn.h>
 #include <queue>
@@ -123,6 +126,8 @@ void UnicodeToANSI(const std::wstring& str, std::string& out);
 /// <param name="str">Ū�J�ഫ�r�ꪺ�ܼ�</param>
 /// <param name="out">�x�s�ഫ�r�ꪺ�ܼ�</param>
 void ANSIToUnicode(const std::string& str, std::wstring& out);
+
+std::string U16StringToString(const std::u16string& str);
 
 /// <summary>
 /// �Q��windows���RtlInitUnicodeString�Nwstring�নUNICODE_STRING

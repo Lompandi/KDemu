@@ -53,28 +53,25 @@ Debugger_t::~Debugger_t() {
         }
 
         fs::copy(DbgDllLocation, ParentDir);
-        Logger::Log(true, ConsoleColor::GREEN, "Copied {} into the "
-            "executable directory..\n",
-            DbgDllLocation.generic_string());
     }
 
     HRESULT Status = DebugCreate(__uuidof(IDebugClient), (void**)&Client_);
     if (FAILED(Status)) {
-        Logger::Log(true, ConsoleColor::RED, "[-] DebugCreate failed with hr={:#x}\n", Status);
+        Logger::Log(true, ConsoleColor::RED, "[-] DebugCreate failed with hr=0x%lx\n", Status);
         return false;
     }
 
     Status =
         Client_->QueryInterface(__uuidof(IDebugControl), (void**)&Control_);
     if (FAILED(Status)) {
-        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugControl failed with hr={:#x}\n", Status);
+        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugControl failed with hr=0x%lx\n", Status);
         return false;
     }
 
     Status = Client_->QueryInterface(__uuidof(IDebugRegisters),
         (void**)&Registers_);
     if (FAILED(Status)) {
-        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugRegisters failed with hr={:#x}\n",
+        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugRegisters failed with hr=0x%lx\n",
             Status);
         return false;
     }
@@ -82,25 +79,25 @@ Debugger_t::~Debugger_t() {
     Status =
         Client_->QueryInterface(__uuidof(IDebugSymbols3), (void**)&Symbols_);
     if (FAILED(Status)) {
-        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugSymbols failed with hr={:#x}\n", Status);
+        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugSymbols failed with hr=0x%lx\n", Status);
         return false;
     }
 
     Status =
         Client_->QueryInterface(__uuidof(IDebugDataSpaces4), (void**)&DataSpaces_);
     if (FAILED(Status)) {
-        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugDataSpaces4 failed with hr={:#x}\n", Status);
+        Logger::Log(true, ConsoleColor::RED, "[-] QueryInterface/IDebugDataSpaces4 failed with hr=0x%lx\n", Status);
         return false;
     }
 
     const std::string& DumpFileString = DumpPath.string();
     const char* DumpFileA = DumpFileString.c_str();
 
-    Logger::Log(true, ConsoleColor::DARK_GREEN, "[*] Processing dump file...\n");
+    Logger::Log(true, ConsoleColor::DARK_GREEN, "[*] Processing dump file... %s\n", DumpFileA);
 
     Status = Client_->OpenDumpFile(DumpFileA);
     if (FAILED(Status)) {
-        Logger::Log(true, ConsoleColor::RED, "[-] OpenDumpFile({}) failed with hr={:#x}\n", DumpFileString,
+        Logger::Log(true, ConsoleColor::RED, "[-] OpenDumpFile(%s) failed with hr=0x%lx\n", DumpFileString,
             Status);
         return false;
     }
@@ -109,7 +106,7 @@ Debugger_t::~Debugger_t() {
 
     Status = Control_->WaitForEvent(DEBUG_WAIT_DEFAULT, INFINITE);
     if (FAILED(Status)) {
-        Logger::Log(true, ConsoleColor::RED, "[-] WaitForEvent for OpenDumpFile failed with hr={:#x}\n",
+        Logger::Log(true, ConsoleColor::RED, "[-] WaitForEvent for OpenDumpFile failed with hr=0x%lx\n",
             Status);
         return false;
     }
@@ -225,4 +222,27 @@ const std::uint8_t* Debugger_t::GetVirtualPage(std::uint64_t VirtualAddress) {
 
     DumpedPages_[PageAddress] = std::move(Page);
     return DumpedPages_.at(PageAddress).get();
+}
+
+uint64_t Debugger_t::Reg64(std::string_view name) const {
+    ULONG Index = 0;
+    if (FAILED(Registers_->GetIndexByName(name.data(), &Index))) {
+        return 0ull;
+    }
+
+    DEBUG_VALUE RegVal;
+    if (FAILED(Registers_->GetValue(Index, &RegVal))) {
+        return 0ull;
+    }
+
+    return RegVal.I64;
+}
+
+std::optional<ModuleInfo> Debugger_t::GetModule(std::string_view modName) const {
+    for (const auto& Mod : Modules_) {
+        if (Mod.Name == modName) {
+            return Mod;
+        }
+    }
+    return {};
 }

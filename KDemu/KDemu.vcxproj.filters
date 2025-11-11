@@ -23,6 +23,9 @@
     <ClCompile Include="Debugger.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
+    <ClCompile Include="FsHooks.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="NtType.hpp" />
@@ -36,6 +39,9 @@
       <Filter>標頭檔</Filter>
     </ClInclude>
     <ClInclude Include="Debugger.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="FsHooks.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
   </ItemGroup>

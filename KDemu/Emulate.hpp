@@ -2,7 +2,12 @@
 #define EMULATE_UNICORN_HPP
 #include "Global.h"
 #include "LoadPE.hpp"
+
+#include <mutex>
 #include <string>
+#include <functional>
+#include <unordered_map>
+
 static std::map<std::string, uint64_t> registryHandles = {
 	{"\\Registry\\Machine\\Software\\Wow6432Node\\EasyAntiCheat", 0x2a},
 	{"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\CI",0x1a},
@@ -21,6 +26,7 @@ static std::map<std::string, uint64_t> registryHandles = {
 class Emulate {
 private:
 	static PEloader* loader;
+
 public:
 	struct Pool {
 		uint64_t addr;
@@ -41,6 +47,9 @@ public:
 	static uint64_t AllocVirtPhysPage(uint64_t virtAddr);
 
 	static void StackFree(ULONG AllocBytes);
+
+	static void SwapContext(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
+	static void KeBugCheckEx(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void RtlInitUnicodeString(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void RtlAnsiStringToUnicodeString(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void RtlInitString(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
@@ -68,7 +77,7 @@ public:
 	static void KeInitializeGuardedMutex(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void ZwDeviceIoControlFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void ZwCreateFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
-	static void ZwQueryInformationFile(uc_engine* uc);
+	// static void ZwQueryInformationFile(uc_engine* uc);
 	static void ZwQueryInformationFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void ZwReadFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void NtQuerySystemInformation(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
@@ -192,8 +201,11 @@ class Unicorn {
 private:
 	static PEloader* loader;
 public:
-	std::map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> NtfuncMap = {
+	std::unordered_map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> NtfuncMap = {
 		{"PsGetCurrentServerSilo", Emulate::PsGetCurrentServerSilo },
+		{"SwapContext", Emulate::SwapContext },
+		{"ExFreePoolWithTag", Emulate::ExFreePoolWithTag },
+		{"KeBugCheckEx", Emulate::KeBugCheckEx },
 		{"RtlLookupFunctionEntry", Emulate::RtlLookupFunctionEntry},
 		{"ZwCreateSection",Emulate::ZwCreateSection},
 		{"KeResetEvent",Emulate::KeResetEvent},
@@ -323,7 +335,7 @@ public:
 		{"KeReadStateTimer",Emulate::KeReadStateTimer }
 	};
 
-	std::map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CngFuncMap = {
+	std::unordered_map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CngFuncMap = {
 		{"BCryptOpenAlgorithmProvider",Emulate::BCryptOpenAlgorithmProvider},
 		{"BCryptCreateHash",Emulate::BCryptCreateHash},
 		{"BCryptHashData",Emulate::BCryptHashData},
@@ -333,14 +345,14 @@ public:
 		{"BCryptDestroyHash",Emulate::BCryptDestroyHash}
 	};
 
-	std::map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CiFuncMap = {
+	std::unordered_map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CiFuncMap = {
 		{"CiCheckSignedFile", Emulate::_CiCheckSignedFile},
 		{"CiFreePolicyInfo",Emulate::CiFreePolicyInfo}
 	};
 
-	std::map<std::string, uint64_t> ntFuncAddr;
-	std::map<std::string, uint64_t> cngFuncAddr;
-	std::map<std::string, uint64_t> fltMgrFuncAddr;
+	std::unordered_map<std::string, uint64_t> ntFuncAddr;
+	std::unordered_map<std::string, uint64_t> cngFuncAddr;
+	std::unordered_map<std::string, uint64_t> fltMgrFuncAddr;
 
 
 	Unicorn();
@@ -617,6 +629,56 @@ public:
 	}
 };
 
-
-
 #endif
+
+
+class HookManager {
+public:
+	using CodeCallback = std::function<void(uc_engine*, uint64_t, uint32_t, const std::vector<uint64_t>&)>;
+
+	struct HookInfo {
+		uc_hook handle;
+		CodeCallback callback;
+		uint64_t begin;
+		uint64_t end;
+		std::vector<uint64_t> savedArgs;
+	};
+
+	void add_temporary_hook(uc_engine* uc, CodeCallback cb,
+		uint64_t begin = 0, uint64_t end = static_cast<uint64_t>(-1),
+		std::vector<uint64_t> savedArgs = {}) {
+		uc_hook hh{};
+		uc_hook_add(uc, &hh, UC_HOOK_CODE, (void*)HookManager::hook_code_dispatch, this, begin, end);
+
+		std::lock_guard<std::mutex> lock(mutex_);
+		hooks_[hh] = { hh, std::move(cb), begin, end, savedArgs };
+
+		std::printf("[+] Temporary code hook added: handle=%llu, range=[0x%llx, 0x%llx]\n",
+			(uint64_t)hh, begin, end);
+	}
+
+private:
+	static void hook_code_dispatch(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
+		auto* self = static_cast<HookManager*>(user_data);
+		std::lock_guard<std::mutex> lock(self->mutex_);
+
+		for (auto it = self->hooks_.begin(); it != self->hooks_.end();) {
+			auto& info = it->second;
+			if (address >= info.begin && address <= info.end) {
+				if (info.callback)
+					info.callback(uc, address, size, info.savedArgs);
+
+				uc_hook_del(uc, info.handle);
+				std::printf("[-] Code hook %llu removed (one-shot)\n", (uint64_t)info.handle);
+				it = self->hooks_.erase(it);
+				continue;
+			}
+			++it;
+		}
+	}
+
+	std::unordered_map<uint64_t, HookInfo> hooks_;
+	std::mutex mutex_;
+};
+
+extern HookManager g_TmpHooks;

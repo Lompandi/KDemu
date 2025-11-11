@@ -66,7 +66,7 @@ void PEloader::MapAllDriversFromKdmp() {
 		const uint64_t alignedStart = imageBase & ~0xfffull;
 		const uint64_t alignedEnd = (imageBase + imageSize + 0xfff) & ~0xfffull;
 		const uint64_t alignedSize = alignedEnd - alignedStart;
-		std::string baseNameNoExt = mod.Name;
+		// std::string baseNameNoExt = mod.Name;
 
 		if (!kdmp.VirtTranslate(alignedStart)) {
 			continue;
@@ -169,19 +169,24 @@ void PEloader::InitProcessor() {
 	SegmentSelector es = { 0 };
 	es.fields.index = 2;
 	emu->es(es.all);
-	uint64_t idtr = 0xfffff8050af9b000;
+
+	uint64_t idtr = g_Debugger->Reg64("idtr");
 	Object* idtrObj = new Object("idtr", idtr, 0x1000);
 	this->objectList.emplace_back(idtrObj);
 	emu->idtr(idtr, 0x0FFF);
 	emu->alloc(0x1000, idtr);
 	emu->write(idtr, kdmp.GetVirtualPage(idtr), 0x1000);
+	
 	/* Init GS Segment */
+
+	// TODO: collect this allong with the dump
 	uint64_t gsBase = GsBase;
 	gsBase = emu->alloc(0x1000, gsBase);
 	emu->gs_base(gsBase);
-	uint64_t CsBase = 0xfffff80508227900;
-
-	emu->cs(CsBase);
+	
+	// TODO: collect this along with the dump 
+	// uint64_t CsBase = 0xfffff80508227900;
+	// emu->cs(CsBase);
 	Object* gsObj = new Object("GS Segment", gsBase, 0x1000);
 	emu->write(gsBase, kdmp.GetVirtualPage(gsBase), 0x1000);
 
@@ -217,11 +222,13 @@ void PEloader::InitProcessor() {
 	emu->cr2(cr2);
 	emu->cr3(cr3);
 	emu->alloc(0x10000, cr3);
+
 	Object* cr3Obj = new Object("CR3", cr3, 0x1000);
 	this->objectList.emplace_back(cr3Obj);
 	emu->cr4(cr4);
 	emu->cr8(cr8);
 	emu->alloc(0x1ad000, 0xfffff0f87c3e0000);
+
 	uint64_t tr = 0x40;
 	emu->tr(tr);
 
@@ -259,7 +266,7 @@ void PEloader::Init() {
 	uint64_t rsp_MapBase = 0xffff890a9a3c1000;
 	auto emu = Emu(uc);
 	emu->alloc(0x20000, rsp_MapBase);
-	uint64_t Rsp = 0xffff890a9a3c72b8;
+	uint64_t Rsp = g_Debugger->Reg64("rsp");
 
 	auto driverEnd = peFiles[0]->End;
 	auto driverEntry = peFiles[0]->Entry;
@@ -269,13 +276,16 @@ void PEloader::Init() {
 	/* Init Register */
 	printf("RSP: %llx\n", Rsp);
 	emu->rsp(Rsp);
-	uint64_t Rcx = 0xffff8f8b8b05f000;
+	
+	// DEBUG
+	uint64_t Rcx = g_Debugger->Reg64("rcx");
+	uint64_t Rdx = g_Debugger->Reg64("rdx");
+
 	emu->alloc(0x1000, Rcx);
-	uint64_t Rdx = 0xffff8f8b89e67000;
 	emu->alloc(0x1000, Rdx);
+	
 	emu->write(Rdx, kdmp.GetVirtualPage(Rdx), 0x1000);
 	const wchar_t* driverName = L"\\Driver\\vgk";
-
 
 	auto drvObj = std::make_unique<_DRIVER_OBJECT>();
 	drvObj->Type = 0x00000004;
@@ -317,7 +327,7 @@ void PEloader::Init() {
 
 	drvObj->HardwareDatabase = &hwDatabase;
 
-	uint64_t drvObjAddr = 0xffff8f8b8b05fe30;
+	uint64_t drvObjAddr = g_Debugger->Reg64("rcx");// 0xffff8f8b8b05fe30;
 
 	emu->write(drvObjAddr, drvObj.get(), sizeof(_DRIVER_OBJECT));
 	uint64_t regPathAddr = Rdx;
@@ -331,14 +341,14 @@ void PEloader::Init() {
 	emu->rdx(regPathAddr);
 }
 
-bool PEloader::LoadDmp()
+bool PEloader::LoadDmp(const fs::path& dumpPath)
 {
-	std::string path = "mem.dmp";
-	if (!kdmp.Parse(path.data())) {
+	auto fullPath = dumpPath.string() + "\\mem.dmp";
+	if (!kdmp.Parse(fullPath.c_str())) {
 		return false;
 	}
 
-	if (!Debugger.Initialize(path)) {
+	if (!Debugger.Initialize(fullPath)) {
 		return false;
 	}
 
@@ -358,8 +368,15 @@ void PEloader::FixImport(uint64_t baseAddr, LIEF::PE::Binary::it_imports imports
 		return std::string(s.substr(0, pos));
 	};
 
+	// DEBUG
 	auto real_func_name = [](std::string_view s) -> std::string {
-		if (s.starts_with('_')) {
+		if (s == "IoGetCurrentProcess") {
+			return "PsGetCurrentProcess";
+		}
+		else if (s == "KeInitializeSpinLock") {
+			return "ExInitializePushLock";
+		}
+		else if (s.starts_with('_')) {
 			return std::string{ s.substr(1) }; // chop off leading '_'
 		}
 		return std::string{ s };
@@ -377,9 +394,9 @@ void PEloader::FixImport(uint64_t baseAddr, LIEF::PE::Binary::it_imports imports
 		for (auto & entry : import.entries()) {
 			std::string funcName = entry.name();
 			uint64_t iatAddr = baseAddr + entry.iat_address();
-			printf("Import function: %s\n", funcName.c_str());
+			// printf("Import function: %s\n", funcName.c_str());
 			auto func_name = std::format("{}!{}", get_mod_name(dllName), real_func_name(funcName));
-			uint64_t funcAddress = Debugger.Evaluate64(func_name.c_str());
+			uint64_t funcAddress = Debugger.GetSymbol(func_name.c_str());
 
 			if (!funcAddress) continue;
 
@@ -488,7 +505,7 @@ void PEloader::LoadModule(const std::string path, int type) {
 	file.close();
 	int page = PAGE_ALIGN(peHeaderSize);
 	
-	for (auto i : peBinary->exported_functions()) {
+	for (const auto& i : peBinary->exported_functions()) {
 		pe->FuncRVA[i.address()] = i.name();
 		pe->FuncAddr[i.name()] = i.address();
 	}
