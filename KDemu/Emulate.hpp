@@ -5,8 +5,6 @@
 
 #include <mutex>
 #include <string>
-#include <functional>
-#include <unordered_map>
 
 static std::map<std::string, uint64_t> registryHandles = {
 	{"\\Registry\\Machine\\Software\\Wow6432Node\\EasyAntiCheat", 0x2a},
@@ -16,17 +14,9 @@ static std::map<std::string, uint64_t> registryHandles = {
 #define WSTRING_TO_VECTOR(str) std::vector<uint8_t>(reinterpret_cast<const uint8_t*>(str), \
                                                    reinterpret_cast<const uint8_t*>(str) + (wcslen(str) + 1) * sizeof(wchar_t))
 
-
-//
-// The commented-out hooks can be integrated directly into the runtime
-// if only want to monitor events, as they have minimal impact
-// on performance.
-//
-
 class Emulate {
 private:
 	static PEloader* loader;
-
 public:
 	struct Pool {
 		uint64_t addr;
@@ -47,9 +37,6 @@ public:
 	static uint64_t AllocVirtPhysPage(uint64_t virtAddr);
 
 	static void StackFree(ULONG AllocBytes);
-
-	static void SwapContext(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
-	static void KeBugCheckEx(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void RtlInitUnicodeString(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void RtlAnsiStringToUnicodeString(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void RtlInitString(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
@@ -77,7 +64,7 @@ public:
 	static void KeInitializeGuardedMutex(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void ZwDeviceIoControlFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void ZwCreateFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
-	// static void ZwQueryInformationFile(uc_engine* uc);
+	static void ZwQueryInformationFile(uc_engine* uc);
 	static void ZwQueryInformationFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void ZwReadFile(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
 	static void NtQuerySystemInformation(uc_engine* uc, uint64_t address, uint32_t size, void* user_data);
@@ -201,11 +188,8 @@ class Unicorn {
 private:
 	static PEloader* loader;
 public:
-	std::unordered_map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> NtfuncMap = {
+	std::map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> NtfuncMap = {
 		{"PsGetCurrentServerSilo", Emulate::PsGetCurrentServerSilo },
-		{"SwapContext", Emulate::SwapContext },
-		{"ExFreePoolWithTag", Emulate::ExFreePoolWithTag },
-		{"KeBugCheckEx", Emulate::KeBugCheckEx },
 		{"RtlLookupFunctionEntry", Emulate::RtlLookupFunctionEntry},
 		{"ZwCreateSection",Emulate::ZwCreateSection},
 		{"KeResetEvent",Emulate::KeResetEvent},
@@ -335,7 +319,7 @@ public:
 		{"KeReadStateTimer",Emulate::KeReadStateTimer }
 	};
 
-	std::unordered_map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CngFuncMap = {
+	std::map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CngFuncMap = {
 		{"BCryptOpenAlgorithmProvider",Emulate::BCryptOpenAlgorithmProvider},
 		{"BCryptCreateHash",Emulate::BCryptCreateHash},
 		{"BCryptHashData",Emulate::BCryptHashData},
@@ -345,14 +329,14 @@ public:
 		{"BCryptDestroyHash",Emulate::BCryptDestroyHash}
 	};
 
-	std::unordered_map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CiFuncMap = {
+	std::map<std::string, void(*)(uc_engine*, uint64_t, uint32_t, void*)> CiFuncMap = {
 		{"CiCheckSignedFile", Emulate::_CiCheckSignedFile},
 		{"CiFreePolicyInfo",Emulate::CiFreePolicyInfo}
 	};
 
-	std::unordered_map<std::string, uint64_t> ntFuncAddr;
-	std::unordered_map<std::string, uint64_t> cngFuncAddr;
-	std::unordered_map<std::string, uint64_t> fltMgrFuncAddr;
+	std::map<std::string, uint64_t> ntFuncAddr;
+	std::map<std::string, uint64_t> cngFuncAddr;
+	std::map<std::string, uint64_t> fltMgrFuncAddr;
 
 
 	Unicorn();
@@ -363,10 +347,12 @@ public:
 	static void hook_mem_write(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user_data);
 	static bool hook_mem_invalid(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user_data);
 	static void hook_access_object(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user_data);
-	static void hook_File_func(uc_engine* uc, std::string modName, std::string funcName, void(*func)(uc_engine*, uint64_t, uint32_t, void*));
+	static void hook_File_func(uc_engine* uc, std::string fileName, std::string funcName, void(*func)(uc_engine*, uint64_t, uint32_t, void*));
+
 
 	static bool check_is_ntFunc(uint64_t _register);
 	static bool check_is_ntFunc_noNext(uint64_t _register);
+
 };
 
 
@@ -629,8 +615,6 @@ public:
 	}
 };
 
-#endif
-
 
 class HookManager {
 public:
@@ -682,3 +666,5 @@ private:
 };
 
 extern HookManager g_TmpHooks;
+
+#endif

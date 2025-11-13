@@ -41,9 +41,16 @@ public:
 	uint64_t Reg64(std::string_view name) const;
 
 	//
+	// Get system module information via MODULE NAME (i.e. "nt", ...)
+	//
+	const ModuleInfo* GetModule(std::string_view modName);
+
+	//
 	// Get system module information via IMAGE NAME (i.e. "ntoskrnl.exe", ...)
 	//
-	std::optional<ModuleInfo> GetModule(std::string_view modName) const;
+	const ModuleInfo* GetModuleByFileName(std::string_view fileName);
+
+	uint64_t GetFunctionVaFromExport(const std::string& fileName, const std::string& funcName);
 
 private:
 	IDebugClient4* Client_;
@@ -55,6 +62,11 @@ private:
 	std::vector<ModuleInfo> Modules_;
 
 	std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> DumpedPages_;
+	std::unordered_map<uint64_t, std::vector<uint8_t>> MappedBinaryContent_;
+
+	std::unordered_map<std::string, const ModuleInfo*> NameToModuleInfo_;
+	std::unordered_map<std::string, const ModuleInfo*> ImageNameToModuleInfo_;
+
 };
 
 extern Debugger_t* g_Debugger;

@@ -1,7 +1,6 @@
 
-#include "Global.h"
-
 #include "Debugger.h"
+#include "Global.h"
 
 Debugger_t* g_Debugger = nullptr;
 
@@ -238,11 +237,90 @@ uint64_t Debugger_t::Reg64(std::string_view name) const {
     return RegVal.I64;
 }
 
-std::optional<ModuleInfo> Debugger_t::GetModule(std::string_view modName) const {
-    for (const auto& Mod : Modules_) {
-        if (Mod.Name == modName) {
-            return Mod;
+const ModuleInfo* Debugger_t::GetModule(std::string_view modName) {
+    std::string modNameStr{ modName };
+    if (!ImageNameToModuleInfo_.contains(modNameStr)) {
+        for (const auto& Mod : Modules_) {
+            if (Mod.Name == modName) {
+                ImageNameToModuleInfo_[modNameStr] = &Mod;
+            }
         }
     }
-    return {};
+
+    return ImageNameToModuleInfo_.contains(modNameStr) ? ImageNameToModuleInfo_.at(modNameStr) : nullptr;
+}
+
+const ModuleInfo* Debugger_t::GetModuleByFileName(std::string_view fileName) {
+    std::string fileNameStr{ fileName };
+
+    if (!NameToModuleInfo_.contains(fileNameStr)) {
+        for (const auto& Mod : Modules_) {
+            if (Mod.ImageName.ends_with(fileName)) {
+                NameToModuleInfo_[fileNameStr] = &Mod;
+            }
+        }
+    }
+
+    return NameToModuleInfo_.contains(fileNameStr) ? NameToModuleInfo_.at(fileNameStr) : nullptr;
+}
+
+#undef min
+
+uint64_t Debugger_t::GetFunctionVaFromExport(const std::string& fileName,
+    const std::string& funcName) {
+
+    auto moduleInfo = GetModuleByFileName(fileName);
+    if (fileName == "ntoskrnl.exe") {
+        moduleInfo = GetModule("nt");
+    }
+
+    if (!moduleInfo) {
+        Logger::Log(true, RED, "Failed to find module %s to load its content", fileName.data());
+        return false;
+    }
+
+    uint64_t moduleBaseVa = moduleInfo->BaseAddress;
+
+    if (!MappedBinaryContent_.contains(moduleBaseVa)) {
+        std::vector<uint8_t> contigusBinaryData_(moduleInfo->Size, 0);
+
+        for (size_t offset = 0; offset < moduleInfo->Size; offset += 0x1000) {
+            auto data = GetVirtualPage(moduleBaseVa + offset);
+            if (!data) continue;
+
+            size_t copySize = std::min(static_cast<size_t>(0x1000), moduleInfo->Size - offset);
+            std::memcpy(contigusBinaryData_.data() + offset, data, copySize);
+        }
+
+        MappedBinaryContent_[moduleBaseVa] = contigusBinaryData_;
+    }
+
+    auto& contigusBinaryData = MappedBinaryContent_.at(moduleBaseVa);
+
+    auto moduleBase = contigusBinaryData.data();
+    auto dosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(moduleBase);
+    auto ntHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(
+        (uint8_t*)moduleBase + dosHeader->e_lfanew);
+
+    auto exportDirRVA = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    if (!exportDirRVA)
+        return 0;
+
+    auto exportDir = reinterpret_cast<IMAGE_EXPORT_DIRECTORY*>(
+        (uint8_t*)moduleBase + exportDirRVA);
+
+    auto names = reinterpret_cast<uint32_t*>((uint8_t*)moduleBase + exportDir->AddressOfNames);
+    auto funcs = reinterpret_cast<uint32_t*>((uint8_t*)moduleBase + exportDir->AddressOfFunctions);
+    auto ordinals = reinterpret_cast<uint16_t*>((uint8_t*)moduleBase + exportDir->AddressOfNameOrdinals);
+
+    for (uint32_t i = 0; i < exportDir->NumberOfNames; i++) {
+        const char* name = (const char*)((uint8_t*)moduleBase + names[i]);
+        if (funcName == name) {
+            uint16_t ordinal = ordinals[i];
+            uint32_t funcRVA = funcs[ordinal];
+            return funcRVA + moduleBaseVa;
+        }
+    }
+
+    return 0;
 }

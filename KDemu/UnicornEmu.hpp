@@ -695,31 +695,7 @@ public:
         return uc_;
     }
 
-    std::uint64_t get_arg(const std::uint64_t Index) {
-        switch (Index) {
-        case 0:
-            return rcx();
-        case 1:
-            return rdx();
-        case 2:
-            return r8();
-        case 3:
-            return r9();
-        default: {
-            uint64_t address = 0;
-            this->try_read(get_arg_address(Index), &address, 8);
-            return address;
-        }
-        }
-    }
 
-    std::uint64_t get_arg_address(const std::uint64_t Index) const {
-        if (Index <= 3) {
-            std::abort();
-        }
-
-        return rsp() + (8 + (Index * 8));
-    }
 
     uc_err start(uint64_t begin, uint64_t until, uint64_t timeout = 0, size_t count = 0) {
         return uc_emu_start(uc_, begin, until, timeout, count);

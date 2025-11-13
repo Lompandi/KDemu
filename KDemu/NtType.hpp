@@ -975,7 +975,6 @@ typedef struct _IO_STATUS_BLOCK {
 
     ULONG_PTR Information;
 } IO_STATUS_BLOCK, * PIO_STATUS_BLOCK;
-
 typedef
 VOID
 (NTAPI* PIO_APC_ROUTINE) (

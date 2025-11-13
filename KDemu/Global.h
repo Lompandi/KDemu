@@ -1,7 +1,4 @@
 #pragma once
-
-// #define WIN32_LEAN_AND_MEAN
-
 #include <Windows.h>
 #include <unicorn/unicorn.h>
 #include <queue>
@@ -127,8 +124,6 @@ void UnicodeToANSI(const std::wstring& str, std::string& out);
 /// <param name="out">�x�s�ഫ�r�ꪺ�ܼ�</param>
 void ANSIToUnicode(const std::string& str, std::wstring& out);
 
-std::string U16StringToString(const std::u16string& str);
-
 /// <summary>
 /// �Q��windows���RtlInitUnicodeString�Nwstring�নUNICODE_STRING
 /// </summary>
@@ -197,3 +192,32 @@ struct Object {
     Object(const std::string& n, uint64_t addr, uint64_t sz) : name(n), address(addr), size(sz) {}
 };
 
+static inline const char* uc_err_name(uc_err e) {
+    static const char* kNames[] = {
+        "UC_ERR_OK",
+        "UC_ERR_NOMEM",
+        "UC_ERR_ARCH",
+        "UC_ERR_HANDLE",
+        "UC_ERR_MODE",
+        "UC_ERR_VERSION",
+        "UC_ERR_READ_UNMAPPED",
+        "UC_ERR_WRITE_UNMAPPED",
+        "UC_ERR_FETCH_UNMAPPED",
+        "UC_ERR_HOOK",
+        "UC_ERR_INSN_INVALID",
+        "UC_ERR_MAP",
+        "UC_ERR_WRITE_PROT",
+        "UC_ERR_READ_PROT",
+        "UC_ERR_FETCH_PROT",
+        "UC_ERR_ARG",
+        "UC_ERR_READ_UNALIGNED",
+        "UC_ERR_WRITE_UNALIGNED",
+        "UC_ERR_FETCH_UNALIGNED",
+        "UC_ERR_HOOK_EXIST",
+        "UC_ERR_RESOURCE",
+        "UC_ERR_EXCEPTION",
+        "UC_ERR_OVERFLOW",
+    };
+    return (e >= 0 && (size_t)e < (sizeof kNames / sizeof kNames[0]))
+        ? kNames[e] : "UC_ERR_UNKNOWN";
+}

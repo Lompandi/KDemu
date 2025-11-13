@@ -20,12 +20,7 @@
     <ClCompile Include="KDemu.cpp" />
     <ClCompile Include="Global.cpp" />
     <ClCompile Include="unicorn.cpp" />
-    <ClCompile Include="Debugger.cpp">
-      <Filter>來源檔案</Filter>
-    </ClCompile>
-    <ClCompile Include="FsHooks.cpp">
-      <Filter>來源檔案</Filter>
-    </ClCompile>
+    <ClCompile Include="Debugger.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="NtType.hpp" />
@@ -38,11 +33,6 @@
     <ClInclude Include="UnicornEmu.hpp">
       <Filter>標頭檔</Filter>
     </ClInclude>
-    <ClInclude Include="Debugger.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="FsHooks.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
+    <ClInclude Include="Debugger.h" />
   </ItemGroup>
 </Project>

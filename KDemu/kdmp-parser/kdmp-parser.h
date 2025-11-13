@@ -328,8 +328,7 @@ public:
     const uint64_t Pml4eGpa = Pml4Base + GuestAddress.u.Pml4Index * 8;
     const MMPTE_HARDWARE Pml4e(PhyRead8(Pml4eGpa));
     if (!Pml4e.u.Present) {
-      // shut the fuck up
-      // printf("Invalid page map level 4, address translation failed!\n");
+      printf("Invalid page map level 4, address translation failed!\n");
       return {};
     }
 
